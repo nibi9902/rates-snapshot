@@ -1,0 +1,96 @@
+"""Scrape PriceLabs i puja el snapshot diari a Supabase.
+
+Env vars requerides (o ~/.pricelabs.env quan s'executa fora de Docker):
+  PRICELABS_EMAIL / PRICELABS_PASSWORD
+  SUPABASE_URL          — p.ex. https://xxxx.supabase.co
+  SUPABASE_SERVICE_KEY  — service role key (bypassa RLS)
+
+Idempotent: upsert sobre (snapshot_date, listing_id, stay_date).
+"""
+import json
+import os
+import sys
+import urllib.request
+from datetime import date, timedelta
+
+from scrape_pricelabs import fetch_calendar
+
+CHUNK = 500
+
+
+def num(v):
+    """PriceLabs codifica 'sense valor' com -1 o strings; normalitza a float/None."""
+    if v in (None, "", "-1", -1):
+        return None
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def rows_from(data, snapshot_date: str):
+    rows = []
+    for l in data:
+        for d in l["calendar"]:
+            rows.append({
+                "snapshot_date": snapshot_date,
+                "listing_id": l["id"],
+                "listing_name": l["name"],
+                "stay_date": d["date"],
+                "price": num(d["price"]),
+                "min_stay": int(d["min_stay"]) if num(d["min_stay"]) is not None else None,
+                "booked_price": num(d["booked_price"]),
+                "user_price": num(d["user_price"]),
+                "uncustomized_price": num(d.get("uncustomized_price")),
+                "unbookable": d["unbookable"] == "1",
+                "num_bookings": int(d["num_bookings"]) if num(d["num_bookings"]) is not None else None,
+                "base_price": num(l.get("base_price")),
+                "min_price": num(l.get("min_price")),
+                "max_price": num(l.get("max_price")),
+                "last_pushed_on": l.get("last_pushed_on"),
+            })
+    return rows
+
+
+def upsert(rows, supabase_url: str, service_key: str):
+    endpoint = (f"{supabase_url}/rest/v1/pricelabs_snapshots"
+                f"?on_conflict=snapshot_date,listing_id,stay_date")
+    for i in range(0, len(rows), CHUNK):
+        chunk = rows[i:i + CHUNK]
+        req = urllib.request.Request(
+            endpoint,
+            data=json.dumps(chunk).encode(),
+            method="POST",
+            headers={
+                "apikey": service_key,
+                "Authorization": f"Bearer {service_key}",
+                "Content-Type": "application/json",
+                "Prefer": "resolution=merge-duplicates,return=minimal",
+            },
+        )
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            if resp.status not in (200, 201, 204):
+                sys.exit(f"Upsert ha fallat: {resp.status} {resp.read()[:500]}")
+        print(f"  upsert {i + len(chunk)}/{len(rows)}")
+
+
+def main():
+    supabase_url = os.environ.get("SUPABASE_URL", "").rstrip("/")
+    service_key = os.environ.get("SUPABASE_SERVICE_KEY", "")
+    if not supabase_url or not service_key:
+        sys.exit("Falten SUPABASE_URL o SUPABASE_SERVICE_KEY a l'entorn.")
+
+    days = int(os.environ.get("SCRAPE_DAYS", "180"))
+    start = date.today().isoformat()
+    end = (date.today() + timedelta(days=days)).isoformat()
+
+    print(f"Scraping PriceLabs {start} → {end} ...")
+    data = fetch_calendar(start, end)
+    rows = rows_from(data, snapshot_date=start)
+    print(f"{len(data)} allotjaments, {len(rows)} files. Pujant a Supabase...")
+    upsert(rows, supabase_url, service_key)
+    print("OK — snapshot desat.")
+
+
+if __name__ == "__main__":
+    main()

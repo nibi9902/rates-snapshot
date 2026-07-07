@@ -1,0 +1,12 @@
+services:
+  pricelabs-snapshot:
+    build: .
+    container_name: pricelabs-snapshot
+    restart: unless-stopped
+    environment:
+      PRICELABS_EMAIL: ${PRICELABS_EMAIL}
+      PRICELABS_PASSWORD: ${PRICELABS_PASSWORD}
+      SUPABASE_URL: https://uyaycbrjdgabzrpugznd.supabase.co
+      SUPABASE_SERVICE_KEY: ${SUPABASE_SERVICE_KEY}
+      RUN_AT: "05:00"        # cada dia a les 05:00 UTC (07:00 CEST)
+      SCRAPE_DAYS: "180"
