@@ -1,6 +1,6 @@
 FROM python:3.12-slim
 
-RUN pip install --no-cache-dir scrapling
+RUN pip install --no-cache-dir scrapling curl_cffi
 
 WORKDIR /app
 COPY login.py extract.py scrape_pricelabs.py push_to_supabase.py entrypoint.sh ./
