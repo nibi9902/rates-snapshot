@@ -28,7 +28,18 @@ def fetch_calendar(start: str, end: str):
     with FetcherSession() as s:
         resp = login(s, email, password)
         if "signin" in resp.url:
-            sys.exit("Login fallit — revisa ~/.pricelabs.env")
+            # Diagnòstic (sense filtrar la contrasenya)
+            masked = f"{email[:3]}…@…{email[-10:]}" if email else "(buit)"
+            body = (resp.html_content or "")
+            import re as _re
+            errs = _re.findall(r'(Invalid\s+\w+[^<."]{0,60}|contraseña[^<."]{0,60}|incorrect[^<."]{0,60}|blocked[^<."]{0,60}|captcha[^<."]{0,40})', body, _re.I)
+            print("── DIAGNÒSTIC LOGIN ──", file=sys.stderr)
+            print(f"  email: {masked} (len={len(email)})", file=sys.stderr)
+            print(f"  password len: {len(password)}  acaba en '?': {password.endswith('?')}", file=sys.stderr)
+            print(f"  status POST: {resp.status}  url final: {resp.url}", file=sys.stderr)
+            print(f"  mida body: {len(body)}", file=sys.stderr)
+            print(f"  missatges d'error detectats: {errs[:5]}", file=sys.stderr)
+            sys.exit("Login fallit — revisa credencials / possible bloqueig d'IP")
         url = f"https://app.pricelabs.co/multicalendar?startDate={start}&endDate={end}"
         r = s.get(url, stealthy_headers=True)
         if r.status != 200:
