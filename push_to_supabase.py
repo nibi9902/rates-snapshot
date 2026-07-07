@@ -80,7 +80,7 @@ def main():
     if not supabase_url or not service_key:
         sys.exit("Falten SUPABASE_URL o SUPABASE_SERVICE_KEY a l'entorn.")
 
-    days = int(os.environ.get("SCRAPE_DAYS", "180"))
+    days = int(os.environ.get("SCRAPE_DAYS", "360"))
     start = date.today().isoformat()
     end = (date.today() + timedelta(days=days)).isoformat()
 

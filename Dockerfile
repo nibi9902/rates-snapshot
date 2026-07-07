@@ -8,6 +8,6 @@ RUN chmod +x entrypoint.sh
 
 # RUN_AT: hora diària d'execució en UTC, format HH:MM (buit = executa un cop i surt)
 ENV RUN_AT=""
-ENV SCRAPE_DAYS=180
+ENV SCRAPE_DAYS=360
 
 ENTRYPOINT ["./entrypoint.sh"]

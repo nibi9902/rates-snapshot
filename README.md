@@ -21,7 +21,7 @@ preus s'han sincronitzat correctament als apartaments.
 | `SUPABASE_URL` | `https://<project>.supabase.co` |
 | `SUPABASE_SERVICE_KEY` | service role key |
 | `RUN_AT` | hora diària UTC `HH:MM` (buit = executa un cop i surt) |
-| `SCRAPE_DAYS` | dies vista a capturar (defecte 180) |
+| `SCRAPE_DAYS` | dies vista a capturar (defecte 360) |
 
 ## Execució local (sense Docker)
 
