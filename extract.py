@@ -73,6 +73,7 @@ def extract(html: str):
                     "uncustomized_price": d.get("uncustomized_price"),
                     "min_price": d.get("min_price"),
                     "max_price": d.get("max_price"),
+                    "holiday_flag": d.get("holiday_flag"),
                 }
                 for d in l.get("pricing_array", [])
             ],

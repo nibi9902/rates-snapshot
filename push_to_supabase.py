@@ -34,6 +34,7 @@ def rows_from(data, snapshot_date: str):
     rows = []
     for l in data:
         for d in l["calendar"]:
+            b = d.get("breakdown") or {}
             rows.append({
                 "snapshot_date": snapshot_date,
                 "listing_id": l["id"],
@@ -52,6 +53,19 @@ def rows_from(data, snapshot_date: str):
                 "weekly_discount": num(l.get("weekly_discount")),
                 "monthly_discount": num(l.get("monthly_discount")),
                 "last_pushed_on": l.get("last_pushed_on"),
+                "holiday_flag": d.get("holiday_flag") == "1",
+                # desglossament del preu (fetch_reasons_json)
+                "seasonality_pct": b.get("seasonality_pct"),
+                "demand_factor_pct": b.get("demand_factor_pct"),
+                "nhood_occ": b.get("nhood_occ"),
+                "nhood_demand": b.get("nhood_demand"),
+                "adr": b.get("adr"),
+                "adr_stly": b.get("adr_stly"),
+                "occupancy": b.get("occupancy"),
+                "is_event": b.get("is_event"),
+                "minstay_reason": b.get("minstay_reason"),
+                "price_summary": b.get("price_summary"),
+                "reasons": b.get("reasons"),
             })
     return rows
 
@@ -89,7 +103,7 @@ def main():
     end = (date.today() + timedelta(days=days)).isoformat()
 
     print(f"Scraping PriceLabs {start} → {end} ...")
-    data = fetch_calendar(start, end)
+    data = fetch_calendar(start, end, with_reasons=True)
     rows = rows_from(data, snapshot_date=start)
     print(f"{len(data)} allotjaments, {len(rows)} files. Pujant a Supabase...")
     upsert(rows, supabase_url, service_key)

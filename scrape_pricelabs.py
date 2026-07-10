@@ -21,9 +21,10 @@ from scrapling.fetchers import FetcherSession
 
 from extract import extract
 from login import load_credentials, login
+from reasons import fetch_reasons, flatten
 
 
-def fetch_calendar(start: str, end: str):
+def fetch_calendar(start: str, end: str, with_reasons: bool = False):
     email, password = load_credentials()
     with FetcherSession() as s:
         resp = login(s, email, password)
@@ -47,6 +48,14 @@ def fetch_calendar(start: str, end: str):
         data = extract(r.html_content)
         if not data:
             sys.exit("0 allotjaments extrets — l'estructura de la pàgina pot haver canviat.")
+        if with_reasons:
+            ids = [l["id"] for l in data if l["id"]]
+            reasons = fetch_reasons(s, ids, start, end)
+            for l in data:
+                per_date = reasons.get(l["id"], {})
+                for day in l["calendar"]:
+                    rd = per_date.get(day["date"])
+                    day["breakdown"] = flatten(rd) if rd else None
         return data
 
 
