@@ -57,6 +57,8 @@ def extract(html: str):
             "max_price": l.get("max") or l.get("max_price"),
             "last_pushed_on": l.get("last_pushed_on"),
             "sync_status": l.get("sync_status"),
+            "weekly_discount": l.get("weekly_discount"),
+            "monthly_discount": l.get("monthly_discount"),
             "calendar": [
                 {
                     "date": d.get("date"),

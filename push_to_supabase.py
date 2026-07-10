@@ -47,6 +47,8 @@ def rows_from(data, snapshot_date: str):
                 "base_price": num(l.get("base_price")),
                 "min_price": num(l.get("min_price")),
                 "max_price": num(l.get("max_price")),
+                "weekly_discount": num(l.get("weekly_discount")),
+                "monthly_discount": num(l.get("monthly_discount")),
                 "last_pushed_on": l.get("last_pushed_on"),
             })
     return rows
