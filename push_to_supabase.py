@@ -5,7 +5,9 @@ Env vars requerides (o ~/.pricelabs.env quan s'executa fora de Docker):
   SUPABASE_URL          — p.ex. https://xxxx.supabase.co
   SUPABASE_SERVICE_KEY  — service role key (bypassa RLS)
 
-Idempotent: upsert sobre (snapshot_date, listing_id, stay_date).
+Només guarda l'últim preu: upsert sobre (listing_id, stay_date), que
+sobreescriu la fila existent (snapshot_date passa a ser la data de
+l'última captura). No acumula historial.
 """
 import json
 import os
@@ -56,7 +58,7 @@ def rows_from(data, snapshot_date: str):
 
 def upsert(rows, supabase_url: str, service_key: str):
     endpoint = (f"{supabase_url}/rest/v1/pricelabs_snapshots"
-                f"?on_conflict=snapshot_date,listing_id,stay_date")
+                f"?on_conflict=listing_id,stay_date")
     for i in range(0, len(rows), CHUNK):
         chunk = rows[i:i + CHUNK]
         req = urllib.request.Request(
