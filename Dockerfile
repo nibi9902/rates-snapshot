@@ -10,7 +10,7 @@ RUN pip install --no-cache-dir \
     browserforge
 
 WORKDIR /app
-COPY login.py extract.py scrape_pricelabs.py push_to_supabase.py entrypoint.sh ./
+COPY login.py extract.py reasons.py scrape_pricelabs.py push_to_supabase.py entrypoint.sh ./
 RUN chmod +x entrypoint.sh
 
 # RUN_AT: hora diària d'execució en UTC, format HH:MM (buit = executa un cop i surt)
