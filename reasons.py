@@ -95,7 +95,20 @@ def flatten(day: dict) -> dict:
 
     is_event = bool(minstay_reason and re.search(r"vento|estivo", minstay_reason))
 
+    # min_stay numèric: el valor de minstay_reason comença amb el número ("2 (...)")
+    r_min_stay = None
+    if minstay_reason:
+        m = re.match(r"\s*(\d+)", minstay_reason)
+        r_min_stay = int(m.group(1)) if m else None
+
     return {
+        # camps de preu de fallback (quan el multicalendari ve buit per aquest listing)
+        "r_price": num(info.get("price")),
+        "r_uncustomized_price": num(info.get("uncustomized_price")),
+        "r_base_price": num(info.get("base_price")),
+        "r_min_price": num(info.get("minimum_price")),
+        "r_max_price": num(info.get("maximum_price")),
+        "r_min_stay": r_min_stay,
         "seasonality_pct": pct(by_key.get("seasonality", {}).get("value")),
         "demand_factor_pct": pct(by_key.get("demand_factor", {}).get("value")),
         "nhood_occ": num(info.get("nhood_occ")),

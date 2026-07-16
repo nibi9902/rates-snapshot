@@ -35,21 +35,39 @@ def rows_from(data, snapshot_date: str):
     for l in data:
         for d in l["calendar"]:
             b = d.get("breakdown") or {}
+            # El multicalendari deixa el preu buit per alguns listings; en aquest
+            # cas fem fallback als valors de reasons (r_*), que són fiables.
+            price = num(d["price"])
+            if price is None:
+                price = b.get("r_price")
+            uncustomized = num(d.get("uncustomized_price"))
+            if uncustomized is None:
+                uncustomized = b.get("r_uncustomized_price")
+            min_stay = int(d["min_stay"]) if num(d["min_stay"]) is not None else b.get("r_min_stay")
+            base_price = num(l.get("base_price"))
+            if base_price is None:
+                base_price = b.get("r_base_price")
+            min_price = num(l.get("min_price"))
+            if min_price is None:
+                min_price = b.get("r_min_price")
+            max_price = num(l.get("max_price"))
+            if max_price is None:
+                max_price = b.get("r_max_price")
             rows.append({
                 "snapshot_date": snapshot_date,
                 "listing_id": l["id"],
                 "listing_name": l["name"],
                 "stay_date": d["date"],
-                "price": num(d["price"]),
-                "min_stay": int(d["min_stay"]) if num(d["min_stay"]) is not None else None,
+                "price": price,
+                "min_stay": min_stay,
                 "booked_price": num(d["booked_price"]),
                 "user_price": num(d["user_price"]),
-                "uncustomized_price": num(d.get("uncustomized_price")),
+                "uncustomized_price": uncustomized,
                 "unbookable": d["unbookable"] == "1",
                 "num_bookings": int(d["num_bookings"]) if num(d["num_bookings"]) is not None else None,
-                "base_price": num(l.get("base_price")),
-                "min_price": num(l.get("min_price")),
-                "max_price": num(l.get("max_price")),
+                "base_price": base_price,
+                "min_price": min_price,
+                "max_price": max_price,
                 "weekly_discount": num(l.get("weekly_discount")),
                 "monthly_discount": num(l.get("monthly_discount")),
                 "last_pushed_on": l.get("last_pushed_on"),
