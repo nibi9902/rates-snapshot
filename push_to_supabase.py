@@ -71,6 +71,10 @@ def rows_from(data, snapshot_date: str):
                 "weekly_discount": num(l.get("weekly_discount")),
                 "monthly_discount": num(l.get("monthly_discount")),
                 "last_pushed_on": l.get("last_pushed_on"),
+                # estat de sincronització de PriceLabs (si és False, el preu és la
+                # recomanació que PriceLabs mostra però NO empeny al canal)
+                "sync_enabled": bool(l.get("sync_toggle")),
+                "sync_status": l.get("sync_status") or None,
                 "holiday_flag": d.get("holiday_flag") == "1",
                 # desglossament del preu (fetch_reasons_json)
                 "seasonality_pct": b.get("seasonality_pct"),

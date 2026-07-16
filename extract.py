@@ -56,7 +56,8 @@ def extract(html: str):
             "min_price": l.get("min") or l.get("min_price"),
             "max_price": l.get("max") or l.get("max_price"),
             "last_pushed_on": l.get("last_pushed_on"),
-            "sync_status": l.get("sync_status"),
+            "sync_status": (l.get("sync_status") or {}).get("text") if isinstance(l.get("sync_status"), dict) else l.get("sync_status"),
+            "sync_toggle": l.get("sync_toggle"),
             "weekly_discount": l.get("weekly_discount"),
             "monthly_discount": l.get("monthly_discount"),
             "calendar": [
