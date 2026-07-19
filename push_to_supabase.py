@@ -30,6 +30,46 @@ def num(v):
         return None
 
 
+def send_whatsapp(text: str):
+    """Avís d'anomalia per WhatsApp (Evolution API, mateix canal que n8n)."""
+    url = os.environ.get(
+        "EVOLUTION_URL",
+        "https://caserna13-evolution-api.f9pppl.easypanel.host/message/sendText/694232714")
+    apikey = os.environ.get("EVOLUTION_APIKEY", "D9AE6D0C900A-43DE-9D27-E66C6E448C38")
+    number = os.environ.get("ALERT_NUMBER", "34644969299")
+    try:
+        req = urllib.request.Request(
+            url,
+            data=json.dumps({"number": f"{number}@s.whatsapp.net", "text": text}).encode(),
+            method="POST",
+            headers={"apikey": apikey, "Content-Type": "application/json"},
+        )
+        urllib.request.urlopen(req, timeout=15)
+        print("Avís WhatsApp enviat.")
+    except Exception as e:  # l'avís mai ha de fer caure l'scrape
+        print(f"WARN: no s'ha pogut enviar l'avís WhatsApp: {e}", file=sys.stderr)
+
+
+def split_empty_listings(data):
+    """Separa els listings que PriceLabs serveix SENSE cap preu diari.
+
+    Quan un listing està en estat d'error a PriceLabs (p.ex. «reconecta tu
+    cuenta de Tokeet»), el multicalendari torna el pricing_array amb tots els
+    camps buits. Si escrivíssim aquestes files, SOBREESCRIURÍEM dades bones
+    del snapshot anterior amb nulls (cas Maçanet, 18-19 jul 2026). Aquests
+    listings NO es pugen i es notifica per WhatsApp.
+    """
+    ok, empty = [], []
+    for l in data:
+        cal = l.get("calendar") or []
+        has_price = any(
+            num(d.get("price")) is not None or (d.get("breakdown") or {}).get("r_price") is not None
+            for d in cal
+        )
+        (ok if (has_price or not cal) else empty).append(l)
+    return ok, empty
+
+
 def rows_from(data, snapshot_date: str):
     rows = []
     for l in data:
@@ -74,7 +114,8 @@ def rows_from(data, snapshot_date: str):
                 # estat de sincronització de PriceLabs (si és False, el preu és la
                 # recomanació que PriceLabs mostra però NO empeny al canal)
                 "sync_enabled": bool(l.get("sync_toggle")),
-                "sync_status": l.get("sync_status") or None,
+                # si PriceLabs marca el listing en error, deixa el motiu a la BD
+                "sync_status": l.get("sync_status") or l.get("error_message") or None,
                 "holiday_flag": d.get("holiday_flag") == "1",
                 # desglossament del preu (fetch_reasons_json)
                 "seasonality_pct": b.get("seasonality_pct"),
@@ -126,11 +167,33 @@ def main():
 
     print(f"Scraping PriceLabs {start} → {end} ...")
     data = fetch_calendar(start, end, with_reasons=True)
+
+    # Guard anti-buit: un listing en error a PriceLabs ve sense preus; no el
+    # pugem (conservem el snapshot anterior) i avisem per WhatsApp.
+    data, empty = split_empty_listings(data)
+    if empty:
+        lines = []
+        for l in empty:
+            why = l.get("error_message") or l.get("sync_status") or "sense motiu conegut"
+            lines.append(f"• {l.get('name')}: {why}")
+        send_whatsapp(
+            "⚠️ PriceLabs: llistats sense preus a l'scrape d'avui (NO s'han "
+            "sobreescrit les dades anteriors):\n" + "\n".join(lines) +
+            "\n\nRevisa'ls al panell de PriceLabs (normalment: reconnectar el compte Tokeet).")
+
     rows = rows_from(data, snapshot_date=start)
-    print(f"{len(data)} allotjaments, {len(rows)} files. Pujant a Supabase...")
+    print(f"{len(data)} allotjaments ({len(empty)} buits saltats), {len(rows)} files. Pujant a Supabase...")
     upsert(rows, supabase_url, service_key)
     print("OK — snapshot desat.")
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except SystemExit as e:
+        if str(e) not in ("", "0", "None"):
+            send_whatsapp(f"❌ Scrape de PriceLabs ha fallat: {e}")
+        raise
+    except Exception as e:
+        send_whatsapp(f"❌ Scrape de PriceLabs ha petat: {type(e).__name__}: {e}")
+        raise
