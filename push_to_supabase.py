@@ -30,6 +30,21 @@ def num(v):
         return None
 
 
+def hostly_name(listing_id: str, supabase_url: str, service_key: str) -> str:
+    """Nom de l'apartament a Hostly per a un listing_id (millor que el de PriceLabs)."""
+    try:
+        q = (f"{supabase_url}/rest/v1/accommodation_channel_listings"
+             f"?external_rental_id=eq.{listing_id}&select=accommodations(name)")
+        req = urllib.request.Request(q, headers={"apikey": service_key, "Authorization": f"Bearer {service_key}"})
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            rows = json.load(resp)
+        if rows and rows[0].get("accommodations"):
+            return rows[0]["accommodations"]["name"]
+    except Exception:
+        pass
+    return ""
+
+
 def send_whatsapp(text: str):
     """Avís d'anomalia per WhatsApp (Evolution API, mateix canal que n8n)."""
     url = os.environ.get(
@@ -172,14 +187,12 @@ def main():
     # pugem (conservem el snapshot anterior) i avisem per WhatsApp.
     data, empty = split_empty_listings(data)
     if empty:
-        lines = []
-        for l in empty:
-            why = l.get("error_message") or l.get("sync_status") or "sense motiu conegut"
-            lines.append(f"• {l.get('name')}: {why}")
+        noms = ", ".join(
+            hostly_name(l.get("id"), supabase_url, service_key) or l.get("name") or "?"
+            for l in empty)
         send_whatsapp(
-            "⚠️ PriceLabs: llistats sense preus a l'scrape d'avui (NO s'han "
-            "sobreescrit les dades anteriors):\n" + "\n".join(lines) +
-            "\n\nRevisa'ls al panell de PriceLabs (normalment: reconnectar el compte Tokeet).")
+            f"⚠️ PriceLabs no sincronitza bé: {noms}. "
+            "Es mantenen els preus anteriors.")
 
     rows = rows_from(data, snapshot_date=start)
     print(f"{len(data)} allotjaments ({len(empty)} buits saltats), {len(rows)} files. Pujant a Supabase...")
