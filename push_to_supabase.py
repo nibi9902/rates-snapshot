@@ -17,7 +17,7 @@ from datetime import date, timedelta
 
 from scrape_pricelabs import fetch_calendar
 
-CHUNK = 500
+CHUNK = 200
 
 
 def num(v):
@@ -148,25 +148,41 @@ def rows_from(data, snapshot_date: str):
     return rows
 
 
+def _post_chunk(endpoint, chunk, service_key):
+    req = urllib.request.Request(
+        endpoint,
+        data=json.dumps(chunk).encode(),
+        method="POST",
+        headers={
+            "apikey": service_key,
+            "Authorization": f"Bearer {service_key}",
+            "Content-Type": "application/json",
+            "Prefer": "resolution=merge-duplicates,return=minimal",
+        },
+    )
+    with urllib.request.urlopen(req, timeout=120) as resp:
+        if resp.status not in (200, 201, 204):
+            raise RuntimeError(f"{resp.status} {resp.read()[:500]}")
+
+
 def upsert(rows, supabase_url: str, service_key: str):
     endpoint = (f"{supabase_url}/rest/v1/pricelabs_snapshots"
                 f"?on_conflict=listing_id,stay_date")
+    import time
     for i in range(0, len(rows), CHUNK):
         chunk = rows[i:i + CHUNK]
-        req = urllib.request.Request(
-            endpoint,
-            data=json.dumps(chunk).encode(),
-            method="POST",
-            headers={
-                "apikey": service_key,
-                "Authorization": f"Bearer {service_key}",
-                "Content-Type": "application/json",
-                "Prefer": "resolution=merge-duplicates,return=minimal",
-            },
-        )
-        with urllib.request.urlopen(req, timeout=60) as resp:
-            if resp.status not in (200, 201, 204):
-                sys.exit(f"Upsert ha fallat: {resp.status} {resp.read()[:500]}")
+        # Reintent amb backoff: el statement_timeout de Postgres pot cancel·lar
+        # un bloc si la BD està ocupada (checkpoint, etc.). No és fatal: es reintenta.
+        for attempt in range(1, 5):
+            try:
+                _post_chunk(endpoint, chunk, service_key)
+                break
+            except Exception as e:
+                if attempt == 4:
+                    sys.exit(f"Upsert ha fallat definitivament al bloc {i}: {e}")
+                wait = 3 * attempt
+                print(f"  [reintent {attempt}] bloc {i} ha fallat ({str(e)[:80]}); espero {wait}s")
+                time.sleep(wait)
         print(f"  upsert {i + len(chunk)}/{len(rows)}")
 
 
