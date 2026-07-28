@@ -87,6 +87,7 @@ def split_empty_listings(data):
 
 def rows_from(data, snapshot_date: str):
     rows = []
+    skipped = 0
     for l in data:
         for d in l["calendar"]:
             b = d.get("breakdown") or {}
@@ -108,6 +109,19 @@ def rows_from(data, snapshot_date: str):
             max_price = num(l.get("max_price"))
             if max_price is None:
                 max_price = b.get("r_max_price")
+            # MAI escriure un dia SENSE preu: l'upsert va per (listing_id,
+            # stay_date), així que pujar-lo sobreescriuria amb NULL el preu bo
+            # d'ahir. Un dia sense preu simplement no es toca i conserva
+            # l'últim conegut.
+            #
+            # Això no és teòric: passa quan PriceLabs serveix el listing a
+            # mitges (cas Canal, 28-jul-2026: 363 de 364 dies a null). El guard
+            # de split_empty_listings només atrapa el cas TOTAL, no el parcial.
+            # I un dia perdut es llegeix com "aquest dia no té preu", que és el
+            # senyal que fa servir l'horitzó per tancar-lo al canal.
+            if price is None:
+                skipped += 1
+                continue
             rows.append({
                 "snapshot_date": snapshot_date,
                 "listing_id": l["id"],
@@ -145,6 +159,8 @@ def rows_from(data, snapshot_date: str):
                 "price_summary": b.get("price_summary"),
                 "reasons": b.get("reasons"),
             })
+    if skipped:
+        print(f"  {skipped} dies sense preu: NO es pugen (es conserva l'últim conegut)")
     return rows
 
 
