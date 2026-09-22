@@ -45,24 +45,48 @@ def hostly_name(listing_id: str, supabase_url: str, service_key: str) -> str:
     return ""
 
 
-def send_whatsapp(text: str):
-    """Avís d'anomalia per WhatsApp (Evolution API, mateix canal que n8n)."""
-    url = os.environ.get(
-        "EVOLUTION_URL",
-        "https://caserna13-evolution-api.f9pppl.easypanel.host/message/sendText/694232714")
-    apikey = os.environ.get("EVOLUTION_APIKEY", "D9AE6D0C900A-43DE-9D27-E66C6E448C38")
-    number = os.environ.get("ALERT_NUMBER", "34644969299")
+def hostly_listings(supabase_url: str, service_key: str) -> dict:
+    """{listing_id: nom} de tots els anuncis coneguts per Hostly.
+
+    És la llista canònica de què s'ha de capturar: el multicalendari de
+    PriceLabs en serveix un subconjunt variable i no es pot fer dependre'n.
+    """
+    q = (f"{supabase_url}/rest/v1/accommodation_channel_listings"
+         f"?external_rental_id=not.is.null&select=external_rental_id,accommodations(name)")
+    req = urllib.request.Request(q, headers={"apikey": service_key,
+                                             "Authorization": f"Bearer {service_key}"})
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        rows = json.load(resp)
+    return {r["external_rental_id"]: (r.get("accommodations") or {}).get("name") or ""
+            for r in rows if r.get("external_rental_id")}
+
+
+def avisa(text: str, severity: str = "error", detail: str | None = None):
+    """Deixa l'avís a `system_issues` (RPC log_system_issue). La comprovació diària
+    de la BD (`pricing_freshness_check`, 05:45 UTC) és qui notifica el gestor.
+    Fins al 22-09-2026 s'enviava per WhatsApp (Evolution 694232714): aquella
+    instància està tancada i els avisos es perdien en silenci."""
+    supabase_url = os.environ.get("SUPABASE_URL", "").rstrip("/")
+    service_key = os.environ.get("SUPABASE_SERVICE_KEY", "")
+    print(f"AVÍS [{severity}] {text}" + (f" — {detail}" if detail else ""))
+    if not supabase_url or not service_key:
+        return
     try:
         req = urllib.request.Request(
-            url,
-            data=json.dumps({"number": f"{number}@s.whatsapp.net", "text": text}).encode(),
+            f"{supabase_url}/rest/v1/rpc/log_system_issue",
+            data=json.dumps({"p_source": "preus", "p_title": text[:200],
+                             "p_detail": detail, "p_severity": severity}).encode(),
             method="POST",
-            headers={"apikey": apikey, "Content-Type": "application/json"},
-        )
+            headers={"apikey": service_key, "Authorization": f"Bearer {service_key}",
+                     "Content-Type": "application/json"})
         urllib.request.urlopen(req, timeout=15)
-        print("Avís WhatsApp enviat.")
     except Exception as e:  # l'avís mai ha de fer caure l'scrape
-        print(f"WARN: no s'ha pogut enviar l'avís WhatsApp: {e}", file=sys.stderr)
+        print(f"WARN: no s'ha pogut registrar l'avís: {e}", file=sys.stderr)
+
+
+def send_whatsapp(text: str):
+    """Compatibilitat: ara és avisa()."""
+    avisa(text)
 
 
 def split_empty_listings(data):
@@ -81,11 +105,13 @@ def split_empty_listings(data):
             num(d.get("price")) is not None or (d.get("breakdown") or {}).get("r_price") is not None
             for d in cal
         )
-        (ok if (has_price or not cal) else empty).append(l)
+        (ok if has_price else empty).append(l)  # calendari buit = buit, no ok
     return ok, empty
 
 
 def rows_from(data, snapshot_date: str):
+    from datetime import datetime, timezone
+    scraped_at = datetime.now(timezone.utc).isoformat()
     rows = []
     skipped = 0
     for l in data:
@@ -143,8 +169,15 @@ def rows_from(data, snapshot_date: str):
                 # estat de sincronització de PriceLabs (si és False, el preu és la
                 # recomanació que PriceLabs mostra però NO empeny al canal)
                 "sync_enabled": bool(l.get("sync_toggle")),
-                # si PriceLabs marca el listing en error, deixa el motiu a la BD
-                "sync_status": l.get("sync_status") or l.get("error_message") or None,
+                # si PriceLabs marca el listing en error, deixa el motiu a la BD;
+                # si el recàlcul (/api/process) ha fallat, també
+                "sync_status": (l.get("sync_status") or l.get("error_message")
+                                or (("process: " + l["process_error"]) if l.get("process_error") else None)),
+                # data de càlcul real de PriceLabs (resposta de /api/process)
+                "last_refreshed_at": l.get("last_refreshed_at"),
+                # l'upsert va per (listing_id, stay_date): sense això el DEFAULT now()
+                # només s'aplicava a l'INSERT i la columna deia agost amb files d'avui
+                "scraped_at": scraped_at,
                 "holiday_flag": d.get("holiday_flag") == "1",
                 # desglossament del preu (fetch_reasons_json)
                 "seasonality_pct": b.get("seasonality_pct"),
@@ -211,34 +244,58 @@ def main():
     days = int(os.environ.get("SCRAPE_DAYS", "360"))
     start = date.today().isoformat()
     end = (date.today() + timedelta(days=days)).isoformat()
+    dry = os.environ.get("DRY_RUN") == "1"
 
-    print(f"Scraping PriceLabs {start} → {end} ...")
-    data = fetch_calendar(start, end, with_reasons=True)
+    coneguts = hostly_listings(supabase_url, service_key)
+    print(f"Scraping PriceLabs {start} → {end} ({len(coneguts)} anuncis a Hostly) ...")
+    data = fetch_calendar(start, end, with_reasons=True, extra=coneguts)
 
-    # Guard anti-buit: un listing en error a PriceLabs ve sense preus; no el
-    # pugem (conservem el snapshot anterior) i avisem per WhatsApp.
+    # Guard anti-buit: un anunci sense cap preu no es puja (es conserva el
+    # snapshot anterior). No s'escriu mai un dia sense preu.
     data, empty = split_empty_listings(data)
-    if empty:
-        noms = ", ".join(
-            hostly_name(l.get("id"), supabase_url, service_key) or l.get("name") or "?"
-            for l in empty)
-        send_whatsapp(
-            f"⚠️ PriceLabs no sincronitza bé: {noms}. "
-            "Es mantenen els preus anteriors.")
-
     rows = rows_from(data, snapshot_date=start)
-    print(f"{len(data)} allotjaments ({len(empty)} buits saltats), {len(rows)} files. Pujant a Supabase...")
-    upsert(rows, supabase_url, service_key)
-    print("OK — snapshot desat.")
+    print(f"{len(data)} allotjaments ({len(empty)} buits saltats), {len(rows)} files.")
+    if dry:
+        print("DRY_RUN: no es puja res.")
+    else:
+        upsert(rows, supabase_url, service_key)
+        print("OK — snapshot desat.")
+
+    # Resum: què ha quedat de cada anunci. Un anunci compta com a bé només si
+    # s'ha pogut recalcular avui, té preus i PriceLabs no hi posa cap avís.
+    def nom(l):
+        return coneguts.get(l.get("id")) or l.get("name") or l.get("id")
+    be, malament = [], []
+    for l in data + empty:
+        ref = (l.get("last_refreshed_at") or "")[:10]
+        motiu = None
+        if l in empty:
+            motiu = "sense preus"
+        elif l.get("process_error"):
+            motiu = l["process_error"][:60]
+        elif l.get("error_message"):
+            motiu = l["error_message"][:60]
+        elif ref != start:
+            motiu = f"càlcul del {ref or '?'}"
+        (malament if motiu else be).append((nom(l), motiu))
+    total = len(coneguts) or len(data) + len(empty)
+    dia = date.today().strftime("%d/%m")
+    if not malament and len(be) >= total:
+        print(f"✅ Preus {dia} · {len(be)}/{total} recalculats i capturats")
+        return 0
+    detall = " · ".join(f"{n}: {m}" for n, m in malament) or f"només {len(be)} de {total}"
+    avisa(f"⚠️ Preus {dia} · {len(be)}/{total} ok · {len(malament) or total - len(be)} amb problema",
+          "warning", detall[:1000])
+    return 1
 
 
 if __name__ == "__main__":
     try:
-        main()
+        sys.exit(main())
     except SystemExit as e:
-        if str(e) not in ("", "0", "None"):
-            send_whatsapp(f"❌ Scrape de PriceLabs ha fallat: {e}")
+        if str(e) not in ("", "0", "1", "None"):
+            avisa(f"❌ Preus {date.today().strftime('%d/%m')}: la passada ha fallat", "error", str(e)[:500])
         raise
     except Exception as e:
-        send_whatsapp(f"❌ Scrape de PriceLabs ha petat: {type(e).__name__}: {e}")
+        avisa(f"❌ Preus {date.today().strftime('%d/%m')}: la passada ha petat", "error", f"{type(e).__name__}: {e}"[:500])
         raise

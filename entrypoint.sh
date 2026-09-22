@@ -16,5 +16,11 @@ while true; do
   fi
   sleep $((target - now))
   echo "[$(date -u)] Executant snapshot..."
-  python3 push_to_supabase.py || echo "[$(date -u)] ERROR en l'execució (es reintentarà demà)"
+  # El codi de sortida es registra sempre: 0 = 18/18 bé, 1 = algun anunci amb
+  # problema (l'avís ja és a la BD), altres = la passada ha petat.
+  set +e
+  python3 push_to_supabase.py
+  rc=$?
+  set -e
+  echo "[$(date -u)] Snapshot acabat amb codi $rc"
 done

@@ -1,8 +1,14 @@
 """Extreu preus i estades mínimes del multicalendari de PriceLabs.
 
 Parseja el payload RSC (self.__next_f.push) incrustat a l'HTML de
-/multicalendar i retorna, per cada allotjament: id, nom i array de dates
-amb price, min_stay, booked_price, etc.
+/multicalendar i retorna, per cada allotjament: id, nom, estat (avís),
+parent_key i array de dates amb price, min_stay, booked_price, etc.
+
+Els anuncis es troben pel seu `listing_id`, NO per la clau `pricing_array`:
+quan un anunci està en error, PriceLabs serveix el seu `pricing_array` com a
+referència RSC a l'array buit d'un altre anunci ("$7:1:props:listings:0:…"),
+i buscant per `pricing_array` aquells anuncis no apareixien mai (setembre 2026:
+16 de 18 invisibles, i cap avís).
 """
 import json
 import re
@@ -17,30 +23,44 @@ def flight_text(html: str) -> str:
     return "".join(parts)
 
 
+def _object_starting_before(flight: str, pos: int):
+    """Retrocedeix des de `pos` fins a la clau '{' que obre l'objecte i el decodifica."""
+    depth = 0
+    i = pos
+    while i > 0:
+        c = flight[i]
+        if c == "}":
+            depth += 1
+        elif c == "{":
+            if depth == 0:
+                break
+            depth -= 1
+        i -= 1
+    try:
+        obj, _ = json.JSONDecoder().raw_decode(flight[i:])
+        return obj
+    except json.JSONDecodeError:
+        return None
+
+
 def find_listing_objects(flight: str):
-    """Troba cada objecte d'allotjament que conté un pricing_array."""
-    decoder = json.JSONDecoder()
-    results = []
-    for m in re.finditer(r'"pricing_array":\[', flight):
-        # retrocedeix fins l'inici de l'objecte listing (brace matching invers)
-        start = m.start()
-        depth = 0
-        i = start
-        while i > 0:
-            c = flight[i]
-            if c == "}":
-                depth += 1
-            elif c == "{":
-                if depth == 0:
-                    break
-                depth -= 1
-            i -= 1
-        try:
-            obj, _ = decoder.raw_decode(flight[i:])
-            results.append(obj)
-        except json.JSONDecodeError as e:
-            print(f"WARN: objecte a offset {i} no parsejable: {e}", file=sys.stderr)
-    return results
+    """Un objecte per anunci: el més complet que contingui `listing_id` i `pricing_array`."""
+    per_id = {}
+    for m in re.finditer(r'"listing_id":"([^"]+)"', flight):
+        lid = m.group(1)
+        obj = _object_starting_before(flight, m.start())
+        if not isinstance(obj, dict) or obj.get("listing_id") != lid or "pricing_array" not in obj:
+            continue
+        if lid not in per_id or len(obj) > len(per_id[lid]):
+            per_id[lid] = obj
+    return list(per_id.values())
+
+
+def _text(v):
+    """PriceLabs alterna {'text': …, 'key': …} i cadena plana per als estats."""
+    if isinstance(v, dict):
+        return v.get("text") or None
+    return v or None
 
 
 def extract(html: str):
@@ -48,18 +68,24 @@ def extract(html: str):
     listings = find_listing_objects(flight)
     out = []
     for l in listings:
+        pa = l.get("pricing_array")
+        # Referència RSC ("$7:1:props:listings:0:pricing_array") = array buit compartit.
+        if not isinstance(pa, list):
+            pa = []
         out.append({
-            "id": l.get("id") or l.get("listing_id"),
-            "name": l.get("name") or l.get("listing_name"),
-            "pms": l.get("pms") or l.get("pms_name"),
-            "base_price": l.get("base") or l.get("base_price"),
-            "min_price": l.get("min") or l.get("min_price"),
-            "max_price": l.get("max") or l.get("max_price"),
+            "id": l.get("listing_id") or l.get("id"),
+            "name": l.get("listing_name") or l.get("name"),
+            "pms": l.get("pms_name") or l.get("pms"),
+            "parent_key": l.get("parent_key"),
+            "base_price": l.get("base_price") or l.get("base"),
+            "min_price": l.get("min_price") or l.get("min"),
+            "max_price": l.get("max_price") or l.get("max"),
             "last_pushed_on": l.get("last_pushed_on"),
-            "sync_status": (l.get("sync_status") or {}).get("text") if isinstance(l.get("sync_status"), dict) else l.get("sync_status"),
-            # Present quan PriceLabs té el listing en estat d'error (p.ex. "reconecta
-            # tu cuenta de Tokeet"); en aquest estat el pricing_array ve BUIT.
-            "error_message": (l.get("error_message") or {}).get("text") if isinstance(l.get("error_message"), dict) else l.get("error_message"),
+            "last_booked_date": l.get("last_booked_date"),
+            "sync_status": _text(l.get("sync_status")),
+            # Present quan PriceLabs té l'anunci en error o sense revisar; en aquest
+            # estat el pricing_array ve BUIT (o és una referència a un de buit).
+            "error_message": _text(l.get("error_message")),
             "sync_toggle": l.get("sync_toggle"),
             "weekly_discount": l.get("weekly_discount"),
             "monthly_discount": l.get("monthly_discount"),
@@ -79,7 +105,7 @@ def extract(html: str):
                     "max_price": d.get("max_price"),
                     "holiday_flag": d.get("holiday_flag"),
                 }
-                for d in l.get("pricing_array", [])
+                for d in pa
             ],
             "_raw_keys": sorted(l.keys()),
         })
@@ -94,9 +120,5 @@ if __name__ == "__main__":
     for l in data:
         cal = l["calendar"]
         rng = f"{cal[0]['date']} → {cal[-1]['date']}" if cal else "(buit)"
-        print(f"  {str(l['id'])[:24]:26} {str(l['name'])[:42]:44} {len(cal):3} dies  {rng}")
-    if data:
-        print("\nclaus del primer objecte:", ", ".join(data[0]["_raw_keys"]))
-        print("\nmostra primer dia:", json.dumps(data[0]["calendar"][0], indent=2))
-    json.dump(data, open("pricelabs_data.json", "w"), indent=1)
-    print("\nDesat a pricelabs_data.json")
+        err = f"  ⚠ {l['error_message'][:50]}" if l.get("error_message") else ""
+        print(f"  {str(l['id'])[:24]:26} {str(l['name'])[:42]:44} {len(cal):3} dies  {rng}{err}")
