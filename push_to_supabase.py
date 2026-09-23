@@ -12,6 +12,7 @@ l'última captura). No acumula historial.
 import json
 import os
 import sys
+import urllib.error
 import urllib.request
 from datetime import date, timedelta
 
@@ -61,6 +62,9 @@ def hostly_listings(supabase_url: str, service_key: str) -> dict:
             for r in rows if r.get("external_rental_id")}
 
 
+SEVERITATS = ("warning", "error", "critical")
+
+
 def avisa(text: str, severity: str = "error", detail: str | None = None):
     """Deixa l'avís a `system_issues` (RPC log_system_issue). La comprovació diària
     de la BD (`pricing_freshness_check`, 05:45 UTC) és qui notifica el gestor.
@@ -71,6 +75,8 @@ def avisa(text: str, severity: str = "error", detail: str | None = None):
     print(f"AVÍS [{severity}] {text}" + (f" — {detail}" if detail else ""))
     if not supabase_url or not service_key:
         return
+    if severity not in SEVERITATS:  # system_issues té un CHECK sobre severity
+        severity = "warning"
     try:
         req = urllib.request.Request(
             f"{supabase_url}/rest/v1/rpc/log_system_issue",
@@ -79,8 +85,11 @@ def avisa(text: str, severity: str = "error", detail: str | None = None):
             method="POST",
             headers={"apikey": service_key, "Authorization": f"Bearer {service_key}",
                      "Content-Type": "application/json"})
-        urllib.request.urlopen(req, timeout=15)
-    except Exception as e:  # l'avís mai ha de fer caure l'scrape
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            print(f"avís registrat a system_issues (HTTP {resp.status})")
+    except urllib.error.HTTPError as e:  # l'avís mai ha de fer caure l'scrape
+        print(f"WARN: system_issues ha rebutjat l'avís: HTTP {e.code} {e.read()[:300]!r}", file=sys.stderr)
+    except Exception as e:
         print(f"WARN: no s'ha pogut registrar l'avís: {e}", file=sys.stderr)
 
 

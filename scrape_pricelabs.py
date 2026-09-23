@@ -35,6 +35,8 @@ from login import load_credentials, login
 from reasons import fetch_reasons, flatten
 
 PROCESS_URL = "https://app.pricelabs.co/api/process"
+REINTENTS_RECALCUL = 1      # un reintent si PriceLabs torna un càlcul que no és d'avui
+ESPERA_RECALCUL = 60        # segons abans del reintent
 
 
 def dia_buit(d: str) -> dict:
@@ -122,9 +124,20 @@ def fetch_calendar(start: str, end: str, with_reasons: bool = False,
                   f"afegits des de Hostly", file=sys.stderr)
 
         if recalcula:
+            import time
             for l in data:
                 try:
                     ref, warn, pa = process_listing(s, l["id"], l.get("pms"), l.get("parent_key"))
+                    # A les 05:01 UTC del 23-09-2026 PriceLabs va tornar a tots els anuncis el
+                    # càlcul del dia abans (finestra nocturna?); a les 06:10 recalculava a cada
+                    # crida. Si el càlcul no és d'avui, s'espera i es reintenta.
+                    intents = 0
+                    while (ref or "")[:10] < start and intents < REINTENTS_RECALCUL:
+                        intents += 1
+                        print(f"  {l.get('name')}: càlcul del {(ref or '?')[:10]}, reintent {intents} "
+                              f"d'aquí {ESPERA_RECALCUL}s", file=sys.stderr)
+                        time.sleep(ESPERA_RECALCUL)
+                        ref, warn, pa = process_listing(s, l["id"], l.get("pms"), l.get("parent_key"))
                     l["last_refreshed_at"] = ref
                     l["warning"] = warn
                     # El recàlcul tanca l'avís «no revisado» del multicalendari (verificat
